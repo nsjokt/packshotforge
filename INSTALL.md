@@ -21,6 +21,11 @@
 ## Batch mode
 Choose **Batch folder**, then select an input folder of jpg/png photos and an output folder. In v1.1 you can select **multiple presets** — every image is rendered with every selected preset (M×N), and a batch report (successes, transparency checks, estimated cost) is shown and saved alongside the results.
 
+## What's new in v1.2
+- **Mask preflight before you're billed:** when Pixel-Lock is on, the script now runs Select Subject *before* calling the API and shows you the outline it found, along with what that image will cost on your key. Photoshop's Select Subject is a local operation and costs nothing, so if it missed the product — or grabbed the whole canvas — you can cancel and fix the shot without having paid for a generation. Cancelling charges nothing.
+- Batch runs skip the prompt (it would defeat the point of batching), and so does the Subscription Bridge import, which never calls the API.
+- To turn the prompt off, add `preflight=off` to your config file (`~/Library/Application Support/PackshotForge/config.txt` on macOS).
+
 ## What's new in v1.1
 - **Pixel-Lock (on by default):** your original product pixels are composited back on top of the generated background using a Select Subject mask — the AI can never redraw your label or product surface. The result dialog shows PIXEL-LOCKED ✓ (or VISUAL CHECK ⚠ if the mask couldn't be applied, so you know to eyeball it).
 - **Transparent cutout export:** one click saves a verified-alpha PNG of just your product.

@@ -319,8 +319,7 @@ if (typeof module !== "undefined" && module.exports) {
 /* Pixel-Lock integrity, transparency verification, and batch-report logic.
  * Pure decision functions, no ExtendScript/DOM dependencies. ES3-compatible,
  * shared between ExtendScript and Node (dependency-free — no require guard
- * needed for other core modules). Consumed by JSX tasks 6-7 (not wired into
- * the bundle include chain here).
+ * needed for other core modules).
  */
 
 function _isValidMaskBounds(maskBounds) {
@@ -445,6 +444,87 @@ function formatCost(n) {
 }
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { PSF_PRICES: PSF_PRICES, estimateCost: estimateCost, formatCost: formatCost };
+}
+
+/* ===== inlined: core/preflight.js ===== */
+/* Pre-commit mask preflight: decide whether to show the user the Select Subject
+ * result BEFORE spending money on generation, and what to tell them.
+ *
+ * Why this exists: today's flow is psfGenerate (billable) -> psfApplyPixelLock
+ * (which is where Select Subject first runs), so an unusable mask is discovered
+ * only after the image has been paid for. Select Subject is a local Photoshop
+ * operation and costs nothing, so running it first turns a wasted charge into a
+ * cancellable prompt.
+ *
+ * Pure decision function, no ExtendScript/DOM dependencies. ES3-compatible,
+ * shared between ExtendScript and Node.
+ *
+ * Bundle include order requirement: this file MUST be inlined AFTER
+ * core/integrity.js and core/pricing.js (see the //@include list in
+ * src/PackshotForge.jsx) so maskSanity / estimateCost / formatCost already
+ * exist as globals under ExtendScript.
+ */
+
+if (typeof require !== "undefined") {
+  var _integrity = require("./integrity.js");
+  var maskSanity = _integrity.maskSanity;
+  var _pricing = require("./pricing.js");
+  var estimateCost = _pricing.estimateCost;
+  var formatCost = _pricing.formatCost;
+}
+
+function _preflightWarnText(reason) {
+  if (reason === "full-frame") {
+    return "The selection covers almost the whole canvas — there is no background left to replace.";
+  }
+  if (reason === "too-small") {
+    return "The selection covers less than 1% of the canvas — Select Subject probably missed the product.";
+  }
+  return "Select Subject could not find a product in this image.";
+}
+
+/* maskBounds: [x1,y1,x2,y2] from Select Subject, or null when it failed.
+ * opts: { pixelLock, isBatch, provider, model }
+ * Returns { action: "skip"|"confirm"|"warn", ok, reason, message }. */
+function preflightGate(maskBounds, docW, docH, opts) {
+  opts = opts || {};
+
+  if (!opts.pixelLock) {
+    return { action: "skip", ok: true, reason: "pixel-lock-off", message: "" };
+  }
+  if (opts.isBatch) {
+    return { action: "skip", ok: true, reason: "batch", message: "" };
+  }
+
+  var price = formatCost(estimateCost(opts.provider, opts.model, 1, false));
+  var sanity = maskSanity(maskBounds, docW, docH);
+
+  if (sanity.ok) {
+    return {
+      action: "confirm",
+      ok: true,
+      reason: "",
+      message: "Select Subject found a product outline — check the selection on canvas before anything is generated.\n\n" +
+        "Generating this image costs about " + price + " on your own API key.\n\n" +
+        "Proceed?"
+    };
+  }
+
+  return {
+    action: "warn",
+    ok: false,
+    reason: sanity.reason,
+    message: _preflightWarnText(sanity.reason) + "\n\n" +
+      "Pixel-Lock will be off for this image, so the model may redraw labels and edges.\n\n" +
+      "Generating anyway costs about " + price + " on your own API key.\n\n" +
+      "Proceed?"
+  };
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    preflightGate: preflightGate
+  };
 }
 
 /* ===== inlined: core/batchPayload.js ===== */
@@ -646,7 +726,11 @@ function psfConfigFile() {
  * compatible. */
 function psfLoadConfig() {
   var f = psfConfigFile();
-  var cfg = { apiKey: "", model: "gemini-3.1-flash-image", lastPreset: "white-bg", provider: "gemini", stabilityKey: "" };
+  /* preflight: "on" (default) shows the Select Subject result and the per-image
+   * cost before the billable call. "off" is a config-file-only kill switch;
+   * there is deliberately no checkbox for it, to keep the main dialog's layout
+   * untouched. */
+  var cfg = { apiKey: "", model: "gemini-3.1-flash-image", lastPreset: "white-bg", provider: "gemini", stabilityKey: "", preflight: "on" };
   if (f.exists && f.open("r")) {
     while (!f.eof) {
       var line = f.readln();
@@ -654,7 +738,7 @@ function psfLoadConfig() {
       if (eq > 0) {
         var k = line.substring(0, eq);
         var v = line.substring(eq + 1);
-        if (k === "apiKey" || k === "model" || k === "lastPreset" || k === "provider" || k === "stabilityKey") cfg[k] = v;
+        if (k === "apiKey" || k === "model" || k === "lastPreset" || k === "provider" || k === "stabilityKey" || k === "preflight") cfg[k] = v;
       }
     }
     f.close();
@@ -670,6 +754,9 @@ function psfSaveConfig(cfg) {
     f.writeln("lastPreset=" + cfg.lastPreset);
     f.writeln("provider=" + (cfg.provider || "gemini"));
     f.writeln("stabilityKey=" + (cfg.stabilityKey || ""));
+    /* must be persisted: this rewrites the whole file, so omitting the key
+     * would silently erase a hand-set `preflight=off` on the next save */
+    f.writeln("preflight=" + (cfg.preflight || "on"));
     f.close();
   }
 }
@@ -819,7 +906,7 @@ function psfSetClipboard(text) {
 }
 
 
-var PSF_VERSION = "1.1.0";
+var PSF_VERSION = "1.2.0";
 var PSF_ENDPOINT_GENERATE = "https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent";
 var PSF_MODELS = ["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-2.5-flash-image"];
 var PSF_MAX_SEND_PX = 1536; /* long edge sent to the API; model re-renders anyway */
@@ -1017,6 +1104,51 @@ function psfApplyPixelLock(doc, genLayer) {
     try { doc.selection.deselect(); } catch (e3) {}
     genLayer.visible = true;
     return { ok: false, reason: e.message };
+  }
+}
+
+/* Run Select Subject BEFORE the billable generate call, show the user what it
+ * found, and let them cancel while cancelling is still free. Returns true to
+ * proceed with generation, false if the user backed out.
+ *
+ * Select Subject is a local Photoshop operation and costs nothing; psfGenerate
+ * is the billable event. Running the mask check first turns "paid for an image
+ * whose mask was unusable" into a prompt.
+ *
+ * The try/finally is the whole safety story and is not optional: a selection
+ * left live when the script ends can bring up Photoshop's generative-fill
+ * onboarding coach-mark, and while that is on screen Photoshop refuses to run
+ * any further script. Every exit path — proceed, cancel, or thrown error —
+ * goes through the finally and drops both the selection and the active-layer
+ * change, so a cancelled preflight leaves the document exactly as it was.
+ *
+ * Fails open: if anything in here throws, the run continues. A preflight that
+ * cannot evaluate the mask must not block a generation the user asked for. */
+function psfPreflightMask(doc, cfg, statusFn) {
+  if (cfg.preflight === "off") return true;
+
+  var prevLayer = null;
+  try {
+    if (statusFn) statusFn("Checking product outline (free — no API call yet)...");
+    prevLayer = doc.activeLayer;
+    /* mirror psfApplyPixelLock: it selects on the bottom (original) layer, so
+     * the outline previewed here is the one Pixel-Lock will actually use */
+    doc.activeLayer = doc.layers[doc.layers.length - 1];
+
+    var bounds = psfSelectSubject(doc);
+    var gate = preflightGate(bounds, doc.width.as("px"), doc.height.as("px"), {
+      pixelLock: cfg.pixelLock,
+      isBatch: false,
+      provider: cfg.provider,
+      model: cfg.model
+    });
+    if (gate.action === "skip") return true;
+    return confirm(gate.message);
+  } catch (e) {
+    return true;
+  } finally {
+    try { doc.selection.deselect(); } catch (eDeselect) {}
+    if (prevLayer) { try { doc.activeLayer = prevLayer; } catch (eLayer) {} }
   }
 }
 
@@ -1682,6 +1814,10 @@ function psfMain() {
         var prompt = buildPrompt(preset.id, { customText: customInput.text, pixelLock: cfg.pixelLock });
         if (app.documents.length === 0) { alert("Open a product photo first."); return; }
         var doc = app.activeDocument;
+        if (!psfPreflightMask(doc, cfg, setStatus)) {
+          setStatus("Cancelled before generating — nothing was charged.");
+          return;
+        }
         var imgPath = psfGenerate(doc, cfg, prompt, setStatus);
         var genLayer = psfPlaceAsLayer(doc, imgPath, "PackshotForge — " + preset.label);
 
