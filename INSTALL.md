@@ -1,5 +1,7 @@
 # PackshotForge — Install & Quick Start (2 minutes)
 
+> Using **GIMP** instead of Photoshop? Skip to [GIMP 3 install](#gimp-3-install) below — same idea, one folder copy, no dependencies.
+
 ## 1. Get your Google Gemini API key (the key itself is free to create)
 1. Go to https://aistudio.google.com and sign in with any Google account.
 2. Click **Get API key** → **Create API key**. Copy it.
@@ -37,3 +39,31 @@ Choose **Batch folder**, then select an input folder of jpg/png photos and an ou
 - Photoshop CC 2015+ recommended, macOS or Windows 10+ (uses the built-in `curl`).
 - Your images go directly from your machine to Google's API. Nothing passes through our servers.
 - Support: reply on Gumroad or email — answers within 24h.
+
+---
+
+# GIMP 3 install
+
+**No pip. No dependencies. Copy one folder.** The plug-in uses only the Python that ships inside GIMP 3.
+
+1. Get a Gemini API key (step 1 above — same key works for both builds).
+2. Copy the `gimp/packshotforge/` folder into GIMP's plug-ins folder:
+   - **macOS:** `~/Library/Application Support/GIMP/3.2/plug-ins/` (or `3.0` for GIMP 3.0.x)
+   - **Linux:** `~/.config/GIMP/3.2/plug-ins/` (Flatpak: `~/.var/app/org.gimp.GIMP/config/GIMP/3.2/plug-ins/`)
+   - **Windows:** `C:\Users\<you>\AppData\Roaming\GIMP\3.2\plug-ins\`
+   The result must be `plug-ins/packshotforge/packshotforge.py` (folder name = file name — GIMP requires this).
+3. macOS/Linux only: make it executable — `chmod +x .../plug-ins/packshotforge/packshotforge.py` (the download usually preserves this already).
+4. Restart GIMP. You'll find **Filters > PackshotForge > Generate Scene…** and **Marketplace Export…**.
+
+## First run (GIMP)
+1. Open a product photo.
+2. **Select the product** — fastest: Fuzzy Select (U) the background, then `Select > Invert`. This selection becomes the **Pixel-Lock** mask: your original product pixels are composited back over the generated scene, so the model can never redraw your label. (No selection? It still works, just without the lock — you'll be warned before anything is billed.)
+3. `Filters > PackshotForge > Generate Scene…`, paste your API key (stored locally, file readable only by you), pick a preset, OK.
+4. Before the billable call you'll see a confirmation with the estimated cost (~$0.067/image standard, ~$0.039 draft mode). Cancelling costs nothing.
+5. The result lands as a layer stack: generated scene + `PSF Product (original)` masked to your selection on top.
+6. `Marketplace Export…` saves a correctly-sized listing JPG (Amazon 2000×2000 white / Etsy 3000×2400 / Shopify 2048×2048).
+
+## GIMP build — current limits
+- Single image per run (the Photoshop build's batch folder mode is on the roadmap for the GIMP build).
+- Gemini only (no Stability provider yet).
+- The generation call is synchronous — GIMP will busy-wait ~10–20 s while Google renders. The progress bar keeps moving.
